@@ -88,6 +88,7 @@ type CharData struct {
 	Data       string
 	parent     *Element
 	whitespace bool
+	dontEscape bool
 }
 
 // A Comment represents an XML comment.
@@ -307,6 +308,19 @@ func (e *Element) SetText(text string) {
 	e.Child[0] = cd
 }
 
+// SetText replaces an element's subsidiary CharData text with a new string.
+func (e *Element) SetTextUnescaped(text string) {
+	if len(e.Child) > 0 {
+		if cd, ok := e.Child[0].(*CharData); ok {
+			cd.Data = text
+			return
+		}
+	}
+	cd := newCharDataUnescaped(text, false, e)
+	copy(e.Child[1:], e.Child[0:])
+	e.Child[0] = cd
+}
+
 // CreateElement creates an element with the specified tag and adds it as the
 // last child element of the element e. The tag may be prefixed by a namespace
 // and a colon.
@@ -391,7 +405,12 @@ func (e *Element) readFrom(ri io.Reader) (n int64, err error) {
 			stack.pop()
 		case xml.CharData:
 			data := string(t)
-			newCharData(data, isWhitespace(data), top)
+			data = strings.Trim(data, " ")
+			if strings.HasPrefix(data, "<![CDATA[") {
+				newCharDataUnescaped(data, isWhitespace(data), top)
+			} else {
+				newCharData(data, isWhitespace(data), top)
+			}
 		case xml.Comment:
 			newComment(string(t), top)
 		case xml.Directive:
@@ -726,6 +745,23 @@ func newCharData(data string, whitespace bool, parent *Element) *CharData {
 	return c
 }
 
+// newCharDataUnescaped creates an XML character data entity and binds it to a parent
+// element. If parent is nil, the CharData token remains unbound. characters will not
+// be replaced with safe version. This should be used when embedding CDATA sections in
+// you xml doc.
+func newCharDataUnescaped(data string, whitespace bool, parent *Element) *CharData {
+	c := &CharData{
+		Data:       data,
+		whitespace: whitespace,
+		parent:     parent,
+		dontEscape: true,
+	}
+	if parent != nil {
+		parent.addChild(c)
+	}
+	return c
+}
+
 // CreateCharData creates an XML character data entity and adds it as a child
 // of element e.
 func (e *Element) CreateCharData(data string) *CharData {
@@ -755,12 +791,18 @@ func (c *CharData) setParent(parent *Element) {
 // writeTo serializes the character data entity to the writer.
 func (c *CharData) writeTo(w *bufio.Writer, s *WriteSettings) {
 	var r *strings.Replacer
-	if s.CanonicalText {
-		r = xmlReplacerCanonicalText
+
+	if !c.dontEscape {
+		if s.CanonicalText {
+			r = xmlReplacerCanonicalText
+		} else {
+			r = xmlReplacerNormal
+		}
+		w.WriteString(r.Replace(c.Data))
 	} else {
-		r = xmlReplacerNormal
+		w.WriteString(c.Data)
+
 	}
-	w.WriteString(r.Replace(c.Data))
 }
 
 // NewComment creates a parentless XML comment.
