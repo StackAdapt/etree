@@ -383,6 +383,7 @@ func (e *Element) readFrom(ri io.Reader) (n int64, err error) {
 	stack.push(e)
 	for {
 		t, err := dec.RawToken()
+
 		switch {
 		case err == io.EOF:
 			return r.bytes, nil
@@ -405,12 +406,11 @@ func (e *Element) readFrom(ri io.Reader) (n int64, err error) {
 			stack.pop()
 		case xml.CharData:
 			data := string(t)
-			data = strings.Trim(data, " ")
-			if strings.HasPrefix(data, "<![CDATA[") {
-				newCharDataUnescaped(data, isWhitespace(data), top)
-			} else {
-				newCharData(data, isWhitespace(data), top)
-			}
+			// GM: make every text block chardata. Golang removes the CDATA
+			// start and end blocks on parsing, so when we remarshal the
+			// CDATA blocks go missing.
+			data = "<![CDATA[" + data + "]]>"
+			newCharDataUnescaped(data, isWhitespace(data), top)
 		case xml.Comment:
 			newComment(string(t), top)
 		case xml.Directive:
